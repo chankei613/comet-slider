@@ -1,20 +1,20 @@
-/* Minimal styles for the container and slides */
-.tdis-root {
+/* Minimal styles for the comet slider container and slides */
+.comet-root {
   position: relative;
   overflow: hidden;
 }
 
-.tdis-slide {
+.comet-slide {
   position: relative;
   display: none;
 }
 
-.tdis-slide[data-active="true"] {
+.comet-slide[data-active="true"] {
   display: block;
 }
 
 /* Make images responsive by default */
-.tdis-slide > img {
+.comet-slide > img {
   max-width: 100%;
   height: auto;
   display: block;

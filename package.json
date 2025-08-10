@@ -1,17 +1,18 @@
 {
-  "name": "three-div-image-slider",
+  "name": "comet-slider",
   "version": "0.1.0",
   "description": "A minimal slider where only the direct child <img> of each slide animates using Three.js (wave/ripple) or falls back to fade.",
   "type": "module",
-  "exports": "./src/index.js",
-  "module": "./src/index.js",
+  "exports": "./src/comet-slider.js",
+  "module": "./src/comet-slider.js",
   "sideEffects": false,
   "keywords": [
     "slider",
     "three.js",
     "webgl",
     "image slider",
-    "vanilla js"
+    "vanilla js",
+    "comet"
   ],
   "license": "MIT",
   "repository": {

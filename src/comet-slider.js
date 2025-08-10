@@ -1,15 +1,100 @@
-// Minimal dependency-free slider with optional Three.js effects on the direct child <img> only.
+// Comet Slider - Minimal dependency-free slider with optional Three.js effects on the direct child <img> only.
+
+// GLSL shaders for effects
+const vertexShader = `
+  precision mediump float;
+  attribute vec3 position;
+  attribute vec2 uv;
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position, 1.0);
+  }
+`;
+
+// Simple sine-wave horizontal distortion
+const fragmentWave = `
+  precision mediump float;
+  uniform sampler2D tex0;
+  uniform sampler2D tex1;
+  uniform float progress;
+  uniform vec2 resolution;
+  uniform float time;
+  varying vec2 vUv;
+
+  // Ease in-out
+  float easeInOut(float t) {
+    return t < 0.5 ? 2.0*t*t : -1.0 + (4.0 - 2.0*t)*t;
+  }
+
+  void main() {
+    float p = easeInOut(clamp(progress, 0.0, 1.0));
+    // wave amount decreases as we reach the end
+    float amp = 0.03 * (1.0 - p);
+    float freq = 12.0;
+    vec2 uv0 = vUv;
+    vec2 uv1 = vUv;
+
+    uv0.x += sin((uv0.y + time*0.5) * freq) * amp;
+    uv1.x += sin((uv1.y + time*0.5) * freq) * (-amp);
+
+    vec4 c0 = texture2D(tex0, uv0);
+    vec4 c1 = texture2D(tex1, uv1);
+
+    // crossfade masked by a soft vertical wipe
+    float mask = smoothstep(0.0, 1.0, vUv.x + (p - 0.5)*0.6);
+    vec4 color = mix(c0, c1, mask * p + p*0.2); // slightly bias towards next
+    gl_FragColor = color;
+  }
+`;
+
+// Ripple from center with radial distortion
+const fragmentRipple = `
+  precision mediump float;
+  uniform sampler2D tex0;
+  uniform sampler2D tex1;
+  uniform float progress;
+  uniform vec2 resolution;
+  uniform float time;
+  varying vec2 vUv;
+
+  float easeInOut(float t) {
+    return t < 0.5 ? 2.0*t*t : -1.0 + (4.0 - 2.0*t)*t;
+  }
+
+  void main() {
+    float p = easeInOut(clamp(progress, 0.0, 1.0));
+    vec2 center = vec2(0.5, 0.5);
+    vec2 toUv = vUv - center;
+    float r = length(toUv);
+
+    // ripple ring moves outward with progress
+    float ring = smoothstep(p*0.8, p*0.8 + 0.15, r);
+    float distort = (0.03 * (1.0 - p)) * sin(24.0 * r - p * 8.0);
+
+    vec2 uv0 = vUv + normalize(toUv) * distort * (1.0 - p);
+    vec2 uv1 = vUv - normalize(toUv) * distort * p;
+
+    vec4 c0 = texture2D(tex0, uv0);
+    vec4 c1 = texture2D(tex1, uv1);
+
+    // blend more where the ring has passed
+    float mixAmt = smoothstep(0.0, 1.0, p) * ring;
+    vec4 color = mix(c0, c1, max(p, mixAmt));
+    gl_FragColor = color;
+  }
+`;
+
 const defaultOptions = {
   animation: 'wave', // 'wave' | 'ripple' | 'none'
   duration: 900, // ms
   autoplay: false,
   interval: 4000, // ms
   loop: true,
-  threeModuleUrl: 'https://unpkg.com/three@0.166.0/build/three.module.js',
   onChange: null
 };
 
-export class Slider {
+export class CometSlider {
   /**
    * @param {HTMLElement|string} rootOrSelector Container element or selector; its direct children <div> are slides.
    * @param {Partial<typeof defaultOptions>} options
@@ -17,7 +102,7 @@ export class Slider {
   constructor(rootOrSelector, options = {}) {
     this.options = { ...defaultOptions, ...options };
     this.root = typeof rootOrSelector === 'string' ? document.querySelector(rootOrSelector) : rootOrSelector;
-    if (!this.root) throw new Error('Slider root element not found');
+    if (!this.root) throw new Error('Comet Slider root element not found');
 
     this.slides = Array.from(this.root.querySelectorAll(':scope > div'));
     if (this.slides.length === 0) throw new Error('No slides found. Place slides as direct <div> children.');
@@ -26,9 +111,9 @@ export class Slider {
     this._timer = null;
     this._isAnimating = false;
 
-    this.root.classList.add('tdis-root');
+    this.root.classList.add('comet-root');
     this.slides.forEach((el, i) => {
-      el.classList.add('tdis-slide');
+      el.classList.add('comet-slide');
       el.setAttribute('data-active', i === 0 ? 'true' : 'false');
     });
 
@@ -158,19 +243,18 @@ export class Slider {
   }
 
   async _webglTransition(kind, fromSlide, toSlide, fromImg, toImg) {
-    // Lazy-load Three.js
+    // Check if Three.js is available globally
     let THREE;
-    try {
-      THREE = await import(this.options.threeModuleUrl);
-    } catch (e) {
-      // Peer dep path (bundler env or node)
+    if (typeof window !== 'undefined' && window.THREE) {
+      THREE = window.THREE;
+    } else {
+      // Fallback to module import (for bundler environments)
       try {
         THREE = await import('three');
-      } catch (e2) {
-        return Promise.reject(e2);
+      } catch (e) {
+        return Promise.reject(new Error('Three.js not found. Please include Three.js before using WebGL animations.'));
       }
     }
-    const { vertexShader, fragmentWave, fragmentRipple } = await import('./effects.js');
 
     // Compute canvas position/size to cover only the image area within the slide
     const slideRect = fromSlide.getBoundingClientRect();
@@ -182,7 +266,7 @@ export class Slider {
 
     // Create overlay canvas
     const canvas = document.createElement('canvas');
-    canvas.className = 'tdis-canvas';
+    canvas.className = 'comet-canvas';
     canvas.style.position = 'absolute';
     canvas.style.left = `${relLeft}px`;
     canvas.style.top = `${relTop}px`;
@@ -292,5 +376,11 @@ export class Slider {
     return new Promise((res, rej) => {
       loader.load(src, tex => res(tex), undefined, rej);
     });
+  }
+
+  _emitChange(fromIndex, toIndex) {
+    if (this.options.onChange && typeof this.options.onChange === 'function') {
+      this.options.onChange(toIndex, fromIndex);
+    }
   }
 }
