@@ -1,0 +1,21 @@
+/* Minimal styles for the container and slides */
+.tdis-root {
+  position: relative;
+  overflow: hidden;
+}
+
+.tdis-slide {
+  position: relative;
+  display: none;
+}
+
+.tdis-slide[data-active="true"] {
+  display: block;
+}
+
+/* Make images responsive by default */
+.tdis-slide > img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}

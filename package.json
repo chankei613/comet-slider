@@ -1,0 +1,24 @@
+{
+  "name": "three-div-image-slider",
+  "version": "0.1.0",
+  "description": "A minimal slider where only the direct child <img> of each slide animates using Three.js (wave/ripple) or falls back to fade.",
+  "type": "module",
+  "exports": "./src/index.js",
+  "module": "./src/index.js",
+  "sideEffects": false,
+  "keywords": [
+    "slider",
+    "three.js",
+    "webgl",
+    "image slider",
+    "vanilla js"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourname/three-div-image-slider.git"
+  },
+  "peerDependencies": {
+    "three": "^0.166.0"
+  }
+}
