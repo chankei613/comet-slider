@@ -44,21 +44,74 @@
       </div>
     </div>
 
-    <script src="https://unpkg.com/three@0.166.0/build/three.min.js"></script>
-    <script type="module">
-      import { CometSlider } from '../src/comet-slider.js';
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r166/three.min.js"></script>
+    <script src="../src/comet-slider.js"></script>
+    <script>
+      // Three.jsの読み込み完了を待つ関数
+      function waitForThreeJS() {
+        return new Promise((resolve) => {
+          if (window.THREE) {
+            console.log('Three.js already available:', window.THREE.REVISION);
+            resolve();
+            return;
+          }
+          
+          // Three.jsが読み込まれるまでポーリング
+          const checkInterval = setInterval(() => {
+            if (window.THREE) {
+              console.log('Three.js loaded:', window.THREE.REVISION);
+              clearInterval(checkInterval);
+              resolve();
+            } else {
+              console.log('Waiting for Three.js...');
+            }
+          }, 100);
+          
+          // タイムアウト（10秒）
+          setTimeout(() => {
+            clearInterval(checkInterval);
+            console.error('Timeout waiting for Three.js');
+            resolve(); // エラーでも続行（フォールバックのため）
+          }, 10000);
+        });
+      }
+      
+      // 初期化関数
+      async function initSlider() {
+        console.log('Starting initialization...');
+        
+        // Three.jsの読み込み完了を待つ
+        await waitForThreeJS();
+        
+        // CometSliderの存在確認
+        if (typeof CometSlider === 'undefined') {
+          console.error('CometSlider is not available!');
+          return;
+        }
+        
+        console.log('Initializing CometSlider...');
+        
+        const slider = new CometSlider('#slider', {
+          animation: 'ripple', // 'wave' | 'ripple' | 'none'
+          duration: 900,
+          autoplay: true,
+          interval: 3000
+        });
 
-      const slider = new CometSlider('#slider', {
-        animation: 'ripple', // 'wave' | 'ripple' | 'none'
-        duration: 900,
-        autoplay: false,
-        interval: 3000
-      });
-
-      document.getElementById('prev').onclick = () => slider.prev();
-      document.getElementById('next').onclick = () => slider.next();
-      document.getElementById('play').onclick = () => slider.play();
-      document.getElementById('stop').onclick = () => slider.stop();
+        document.getElementById('prev').onclick = () => slider.prev();
+        document.getElementById('next').onclick = () => slider.next();
+        document.getElementById('play').onclick = () => slider.play();
+        document.getElementById('stop').onclick = () => slider.stop();
+        
+        console.log('CometSlider initialized successfully');
+      }
+      
+      // DOM読み込み完了後に初期化
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initSlider);
+      } else {
+        initSlider();
+      }
     </script>
   </body>
 </html>

@@ -94,7 +94,7 @@ const defaultOptions = {
   onChange: null
 };
 
-export class CometSlider {
+class CometSlider {
   /**
    * @param {HTMLElement|string} rootOrSelector Container element or selector; its direct children <div> are slides.
    * @param {Partial<typeof defaultOptions>} options
@@ -181,11 +181,14 @@ export class CometSlider {
           this._isAnimating = false;
           this._emitChange(fromIndex, toIndex);
         })
-        .catch(() => {
+        .catch((error) => {
+          console.warn('WebGL transition failed, falling back to fade:', error);
           // last-resort fallback
-          this._activateIndex(toIndex);
-          this._isAnimating = false;
-          this._emitChange(fromIndex, toIndex);
+          this._fadeImages(fromSlide, toSlide, fromImg, toImg, () => {
+            this._activateIndex(toIndex);
+            this._isAnimating = false;
+            this._emitChange(fromIndex, toIndex);
+          });
         });
     }
   }
@@ -243,138 +246,221 @@ export class CometSlider {
   }
 
   async _webglTransition(kind, fromSlide, toSlide, fromImg, toImg) {
-    // Check if Three.js is available globally
+    // Check if Three.js is available globally - more comprehensive check
     let THREE;
+    
+    console.log('Checking Three.js availability...');
+    console.log('window.THREE:', window.THREE);
+    console.log('global THREE:', typeof window !== 'undefined' ? typeof window.THREE : 'window not available');
+    
+    // Try multiple ways to access Three.js
     if (typeof window !== 'undefined' && window.THREE) {
       THREE = window.THREE;
+      console.log('Found THREE via window.THREE');
+    } else if (typeof globalThis !== 'undefined' && globalThis.THREE) {
+      THREE = globalThis.THREE;
+      console.log('Found THREE via globalThis.THREE');
     } else {
-      // Fallback to module import (for bundler environments)
+      // Try to access THREE as a global variable
       try {
-        THREE = await import('three');
+        THREE = eval('THREE');
+        console.log('Found THREE via eval');
       } catch (e) {
-        return Promise.reject(new Error('Three.js not found. Please include Three.js before using WebGL animations.'));
+        console.log('THREE not found via eval:', e.message);
       }
     }
+    
+    if (!THREE) {
+      console.error('Three.js not found anywhere!');
+      console.log('Available global properties containing "three":', 
+        Object.keys(window).filter(k => k.toLowerCase().includes('three')));
+      console.log('All THREE-related globals:', {
+        'window.THREE': typeof window.THREE,
+        'globalThis.THREE': typeof globalThis?.THREE,
+        'self.THREE': typeof self?.THREE
+      });
+      return Promise.reject(new Error('Three.js not found. Please include Three.js before using WebGL animations.'));
+    }
+    
+    console.log('Three.js found successfully! Version:', THREE.REVISION);
+    
+    // Verify essential Three.js components
+    const requiredComponents = ['WebGLRenderer', 'Scene', 'OrthographicCamera', 'PlaneGeometry', 'ShaderMaterial', 'TextureLoader'];
+    const missingComponents = requiredComponents.filter(comp => !THREE[comp]);
+    
+    if (missingComponents.length > 0) {
+      console.error('Three.js components missing:', missingComponents);
+      return Promise.reject(new Error(`Three.js components are incomplete. Missing: ${missingComponents.join(', ')}`));
+    }
+    
+    console.log('All required Three.js components verified successfully');
 
-    // Compute canvas position/size to cover only the image area within the slide
-    const slideRect = fromSlide.getBoundingClientRect();
-    const imgRect = fromImg.getBoundingClientRect();
-    const relLeft = imgRect.left - slideRect.left;
-    const relTop = imgRect.top - slideRect.top;
-    const width = Math.round(imgRect.width);
-    const height = Math.round(imgRect.height);
+    try {
+      // Compute canvas position/size to cover only the image area within the slide
+      const slideRect = fromSlide.getBoundingClientRect();
+      const imgRect = fromImg.getBoundingClientRect();
+      const relLeft = imgRect.left - slideRect.left;
+      const relTop = imgRect.top - slideRect.top;
+      const width = Math.round(imgRect.width);
+      const height = Math.round(imgRect.height);
 
-    // Create overlay canvas
-    const canvas = document.createElement('canvas');
-    canvas.className = 'comet-canvas';
-    canvas.style.position = 'absolute';
-    canvas.style.left = `${relLeft}px`;
-    canvas.style.top = `${relTop}px`;
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
-    canvas.style.pointerEvents = 'none';
-    canvas.style.zIndex = '3';
-    // Ensure slide positioning
-    const prevPos = getComputedStyle(fromSlide).position;
-    if (prevPos === 'static') fromSlide.style.position = 'relative';
-    fromSlide.appendChild(canvas);
+      console.log('WebGL transition starting:', { kind, width, height, revision: THREE.REVISION });
 
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(width, height, false);
+      // Create overlay canvas
+      const canvas = document.createElement('canvas');
+      canvas.className = 'comet-canvas';
+      canvas.style.position = 'absolute';
+      canvas.style.left = `${relLeft}px`;
+      canvas.style.top = `${relTop}px`;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      canvas.style.pointerEvents = 'none';
+      canvas.style.zIndex = '3';
+      // Ensure slide positioning
+      const prevPos = getComputedStyle(fromSlide).position;
+      if (prevPos === 'static') fromSlide.style.position = 'relative';
+      fromSlide.appendChild(canvas);
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      const renderer = new THREE.WebGLRenderer({ 
+        canvas, 
+        alpha: true, 
+        antialias: true, 
+        powerPreference: 'high-performance' 
+      });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(width, height, false);
 
-    // Plane covers clipspace -1..1
-    const geometry = new THREE.PlaneBufferGeometry(2, 2);
-    const loader = new THREE.TextureLoader();
+      const scene = new THREE.Scene();
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-    const [t0, t1] = await Promise.all([
-      this._loadTexture(loader, fromImg.src),
-      this._loadTexture(loader, toImg.src)
-    ]);
-    t0.minFilter = THREE.LinearFilter;
-    t1.minFilter = THREE.LinearFilter;
-    t0.magFilter = THREE.LinearFilter;
-    t1.magFilter = THREE.LinearFilter;
+      // Plane covers clipspace -1..1 (use PlaneGeometry for newer Three.js versions)
+      let geometry;
+      if (THREE.PlaneBufferGeometry) {
+        geometry = new THREE.PlaneBufferGeometry(2, 2);
+      } else {
+        geometry = new THREE.PlaneGeometry(2, 2);
+      }
+      
+      const loader = new THREE.TextureLoader();
 
-    const uniforms = {
-      progress: { value: 0 },
-      tex0: { value: t0 },
-      tex1: { value: t1 },
-      resolution: { value: new THREE.Vector2(width, height) },
-      time: { value: 0 }
-    };
+      const [t0, t1] = await Promise.all([
+        this._loadTexture(loader, fromImg.src),
+        this._loadTexture(loader, toImg.src)
+      ]);
+      
+      t0.minFilter = THREE.LinearFilter;
+      t1.minFilter = THREE.LinearFilter;
+      t0.magFilter = THREE.LinearFilter;
+      t1.magFilter = THREE.LinearFilter;
 
-    const fragmentShader = kind === 'ripple' ? fragmentRipple : fragmentWave;
+      const uniforms = {
+        progress: { value: 0 },
+        tex0: { value: t0 },
+        tex1: { value: t1 },
+        resolution: { value: new THREE.Vector2(width, height) },
+        time: { value: 0 }
+      };
 
-    const material = new THREE.ShaderMaterial({
-      uniforms,
-      vertexShader,
-      fragmentShader,
-      transparent: true
-    });
+      const fragmentShader = kind === 'ripple' ? fragmentRipple : fragmentWave;
 
-    const mesh = new THREE.Mesh(geometry, material);
-    scene.add(mesh);
+      const material = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader,
+        fragmentShader,
+        transparent: true
+      });
 
-    // Hide only the images during animation; keep texts visible
-    const prevFromOpacity = fromImg.style.opacity;
-    const prevToOpacity = toImg.style.opacity;
-    fromImg.style.opacity = '0';
-    toImg.style.opacity = '0';
-    // Ensure both slides are visible so that text/layout stays intact
-    toSlide.setAttribute('data-active', 'true');
-    fromSlide.setAttribute('data-active', 'true');
+      const mesh = new THREE.Mesh(geometry, material);
+      scene.add(mesh);
 
-    // Animate
-    const dur = this.options.duration;
-    const start = performance.now();
+      // Hide only the images during animation; keep texts visible
+      const prevFromOpacity = fromImg.style.opacity;
+      const prevToOpacity = toImg.style.opacity;
+      fromImg.style.opacity = '0';
+      toImg.style.opacity = '0';
+      // Ensure both slides are visible so that text/layout stays intact
+      toSlide.setAttribute('data-active', 'true');
+      fromSlide.setAttribute('data-active', 'true');
 
-    return new Promise((resolve, reject) => {
-      const step = now => {
-        const t = Math.min(1, (now - start) / dur);
-        uniforms.progress.value = t;
-        uniforms.time.value = (now - start) * 0.001;
-        renderer.render(scene, camera);
-        if (t < 1) {
+      // Animate
+      const dur = this.options.duration;
+      const start = performance.now();
+
+      return new Promise((resolve, reject) => {
+        const step = (now) => {
+          try {
+            const t = Math.min(1, (now - start) / dur);
+            uniforms.progress.value = t;
+            uniforms.time.value = (now - start) * 0.001;
+            renderer.render(scene, camera);
+            
+            if (t < 1) {
+              this._raf = requestAnimationFrame(step);
+            } else {
+              // Cleanup
+              if (this._raf) cancelAnimationFrame(this._raf);
+              // Reveal destination image only
+              toImg.style.opacity = prevToOpacity || '';
+              fromImg.style.opacity = prevFromOpacity || '';
+              try {
+                renderer.dispose();
+                geometry.dispose();
+                material.dispose();
+                if (t0.dispose) t0.dispose();
+                if (t1.dispose) t1.dispose();
+              } catch (disposeError) {
+                console.warn('Dispose error:', disposeError);
+              }
+              canvas.remove();
+              // finalize slide active state
+              fromSlide.setAttribute('data-active', 'false');
+              toSlide.setAttribute('data-active', 'true');
+              console.log('WebGL transition completed');
+              resolve();
+            }
+          } catch (stepError) {
+            console.error('Animation step error:', stepError);
+            // Cleanup on error
+            if (this._raf) cancelAnimationFrame(this._raf);
+            canvas.remove();
+            toImg.style.opacity = prevToOpacity || '';
+            fromImg.style.opacity = prevFromOpacity || '';
+            reject(stepError);
+          }
+        };
+        
+        try {
           this._raf = requestAnimationFrame(step);
-        } else {
-          // Cleanup
-          cancelAnimationFrame(this._raf);
-          // Reveal destination image only
+        } catch (e) {
+          console.error('Failed to start animation:', e);
+          // Fallback
+          canvas.remove();
           toImg.style.opacity = prevToOpacity || '';
           fromImg.style.opacity = prevFromOpacity || '';
-          try {
-            renderer.dispose();
-            geometry.dispose();
-            material.dispose();
-            t0.dispose && t0.dispose();
-            t1.dispose && t1.dispose();
-          } catch {}
-          canvas.remove();
-          // finalize slide active state
-          fromSlide.setAttribute('data-active', 'false');
-          toSlide.setAttribute('data-active', 'true');
-          resolve();
+          reject(e);
         }
-      };
-      try {
-        this._raf = requestAnimationFrame(step);
-      } catch (e) {
-        // Fallback
-        canvas.remove();
-        toImg.style.opacity = prevToOpacity || '';
-        fromImg.style.opacity = prevFromOpacity || '';
-        reject(e);
-      }
-    });
+      });
+
+    } catch (error) {
+      console.error('WebGL transition setup error:', error);
+      return Promise.reject(error);
+    }
   }
 
   _loadTexture(loader, src) {
-    return new Promise((res, rej) => {
-      loader.load(src, tex => res(tex), undefined, rej);
+    return new Promise((resolve, reject) => {
+      loader.load(
+        src, 
+        (texture) => {
+          console.log('Texture loaded:', src);
+          resolve(texture);
+        }, 
+        undefined, 
+        (error) => {
+          console.error('Texture load error:', error);
+          reject(error);
+        }
+      );
     });
   }
 
@@ -383,4 +469,9 @@ export class CometSlider {
       this.options.onChange(toIndex, fromIndex);
     }
   }
+}
+
+// グローバルに公開
+if (typeof window !== 'undefined') {
+  window.CometSlider = CometSlider;
 }
